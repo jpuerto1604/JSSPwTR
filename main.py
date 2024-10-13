@@ -10,12 +10,13 @@ df4 = pd.DataFrame(np.array([[0,4,8,10,14],[18,0,4,6,10],[20,14,0,8,6],[12,8,6,0
 #Loading of processing times and machines data
 xls = pd.read_excel('/Users/julian/Documentos/Thesis/Data.xlsx', sheet_name='Macrodata', usecols='F:H, J:P, R:X')
 data=pd.DataFrame(xls)
+data.loc[:,'nj'] = data.loc[:,'nj']+1
 data = data.fillna('')
 p_times =pd.DataFrame(data.iloc[:,:10].to_numpy(),columns=["Set","Job","nj","P1","P2","P3","P4","P5","P6","P7"])
 m_data = pd.DataFrame(data.iloc[:, [0, 1, 2] + list(range(10, data.shape[1]))].to_numpy(), columns=["Set", "Job", "nj"] + [f"M{i}" for i in range(1, data.shape[1] - 9)])
 
 #Function to retrieve transport times with strings
-def t_times(layout,start,end):
+def t_times(layout, start, end):
     match layout:
         case 1:
             return df1.loc[start,end]
@@ -28,8 +29,33 @@ def t_times(layout,start,end):
 
 #Retrieve the data from the sequence to perform based on a specific set
 def jobs(nset):
-    return m_data[m_data['Set'] == nset]
+    return m_data[m_data['Set'] == nset].iloc[:, 1:].reset_index(drop=True)
 
 #Retrieve the data from the processing times based on a specific set
 def processing(nset):
-    return p_times[p_times['Set'] == nset]
+    return p_times[p_times['Set'] == nset].iloc[:, 1:].reset_index(drop=True)
+
+#Function to calculate the total processing time of a job in a specific set
+def total_processing(nset, job):
+    times = processing(nset)
+    return times[times['Job'] == job].iloc[0, 3:].sum()
+
+#Function to calculate the total transport time of a job in a specific set
+def total_transport(layout, nset, job):
+    #Retrieve the sequence of jobs
+    jobs_data = jobs(nset)
+    #Retrieve the sequence of the specific job
+    job_sequence = jobs_data[jobs_data['Job'] == job]
+    #Calculate the total transport time
+    total = 0
+    try:
+        for i in range(2, 2+job_sequence['nj'].astype(int).values[0]):
+            start = job_sequence[i]
+            end = job_sequence[i+1]
+            print(start,",",end)
+            total += t_times(layout, start, end)
+        return total
+    except:
+        return "Error"
+
+
