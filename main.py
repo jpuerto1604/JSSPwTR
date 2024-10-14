@@ -68,3 +68,16 @@ def total_transport(layout, nset):
     for i in range(jobs_data.shape[0]):
         total += transport_time(layout, nset, jobs_data.iloc[i, 0])
     return total
+
+#Serialize all jobs from a set in a single array with an ID
+def serialization(nset):
+    jobs_data = jobs(nset)
+    jobs_data = jobs_data[jobs_data.columns[2:]].to_numpy()
+    serialized_jobs = []
+    for job_id, job in enumerate(jobs_data, start=1):
+        for pos, machine in enumerate(job):
+            if machine != '':
+                serialized_jobs.append((job_id, pos + 1, machine))
+    jobs_data = np.array(serialized_jobs)
+    jobs_data = pd.DataFrame(jobs_data,columns=["Job","Position","Machine"])
+    return jobs_data
