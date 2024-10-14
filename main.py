@@ -40,22 +40,31 @@ def total_processing(nset, job):
     times = processing(nset)
     return times[times['Job'] == job].iloc[0, 3:].sum()
 
-#Function to calculate the total transport time of a job in a specific set
-def total_transport(layout, nset, job):
-    #Retrieve the sequence of jobs
+# Function to calculate the total transport time of a job in a specific set
+def transport_time(layout, nset, job):
+    # Retrieve the sequence of jobs
     jobs_data = jobs(nset)
-    #Retrieve the sequence of the specific job
-    job_sequence = jobs_data[jobs_data['Job'] == job]
-    #Calculate the total transport time
+    # Retrieve the job data
+    job_data = jobs_data[jobs_data['Job'] == job].iloc[0, 2:].to_numpy()
+    # Count the number of operations
+    nops = np.count_nonzero(job_data)
+    # Initialize the total transport time
     total = 0
+    # Iterate over the sequence of jobs to calculate the total transport time
     try:
-        for i in range(2, 2+job_sequence['nj'].astype(int).values[0]):
-            start = job_sequence[i]
-            end = job_sequence[i+1]
-            print(start,",",end)
-            total += t_times(layout, start, end)
+        for i in range(nops - 1):
+            total += t_times(layout, job_data[i], job_data[i + 1])
         return total
     except:
-        return "Error"
+        return 0
 
-
+# Function to calculate the total transport time for all jobs in a specific set
+def total_transport(layout, nset):
+    # Retrieve the sequence of jobs
+    jobs_data = jobs(nset)
+    # Initialize the total transport time
+    total = 0
+    # Iterate over all jobs to calculate the total transport time
+    for i in range(jobs_data.shape[0]):
+        total += transport_time(layout, nset, jobs_data.iloc[i, 0])
+    return total
