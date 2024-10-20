@@ -6,9 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from collections import deque
 
-# =====================================================
 # 1. Data Loading and Transport/Processing Times
-# =====================================================
 
 # Define transport times between locations for different layouts
 df1 = pd.DataFrame(np.array([
@@ -45,19 +43,25 @@ df4 = pd.DataFrame(np.array([
 
 # Load processing times and machine assignments from Excel
 # Adjust the file path as needed
-xls = pd.read_excel('Data.xlsx', sheet_name='Macrodata', usecols='F:H, J:P, R:X')
+xls = pd.read_excel('/Users/julian/Documentos/Thesis/Data.xlsx', sheet_name='Macrodata', usecols='F:H, J:P, R:X')
 data = pd.DataFrame(xls)
 data.loc[:, 'nj'] = data.loc[:, 'nj'] + 1  # Adjust job numbers
 data = data.fillna('')
 
 # Extract processing times and machine assignments
-p_times = pd.DataFrame(data.iloc[:, :10].to_numpy(), columns=[
-    "Set", "Job", "nj", "P1", "P2", "P3", "P4", "P5", "P6", "P7"])
-m_data = pd.DataFrame(data.iloc[:, [0, 1, 2] + list(range(10, data.shape[1]))].to_numpy(),
-                      columns=["Set", "Job", "nj"] + [f"M{i}" for i in range(1, data.shape[1] - 9)])
+p_times = pd.DataFrame(data.iloc[:, :10].to_numpy(), columns=["Set", "Job", "nj", "P1", "P2", "P3", "P4", "P5", "P6", "P7"])
+m_data = pd.DataFrame(data.iloc[:, [0, 1, 2] + list(range(10, data.shape[1]))].to_numpy(),columns=["Set", "Job", "nj"] + [f"M{i}" for i in range(1, data.shape[1] - 9)])
 
-# Function to retrieve transport times between locations (machines)
+
 def t_times(layout, start, end):
+    '''Parameters:
+    -start: location where the step starts
+    -end: destination of the current step
+    -layout: the layout number for transport times (1 to 4)
+
+    Returns:
+    -The transport time between the start and end locations for the given layout.
+    '''
     if layout == 1:
         return df1.loc[start, end]
     elif layout == 2:
@@ -68,18 +72,27 @@ def t_times(layout, start, end):
         return df4.loc[start, end]
     else:
         raise ValueError("Invalid layout number.")
-
-# Retrieve the job data for a specific set
 def jobs(nset):
+    '''
+    Parameters:
+    -nset: the specific job set being used
+
+    Returns:
+    -The job data for the given set, including the job number and machine assignments.
+    '''
     return m_data[m_data['Set'] == nset].iloc[:, 1:].reset_index(drop=True)
 
-# Retrieve the processing times for a specific set
 def processing(nset):
+    '''
+    Parameters:
+    -nset: the specific job set being used
+
+    Returns:
+    -The processing times for the given set, including the job number and processing times for each machine.
+    '''
     return p_times[p_times['Set'] == nset].iloc[:, 1:].reset_index(drop=True)
 
-# =====================================================
-# 2. Job Shop Scheduling Environment with Time Tracking
-# =====================================================
+# Job Shop Scheduling Environment with Time Tracking
 
 class JobShopEnv:
     def __init__(self, layout, nset, jobs_data, processing_data, num_agvs):
@@ -111,7 +124,7 @@ class JobShopEnv:
         # Dictionary to track which machine each job needs to go to next in its sequence
         self.job_next_machine = {job_id: 0 for job_id in range(len(self.jobs_data))}
 
-        # **New Data Structure for Time Tracking**
+        # Data Structure for Time Tracking
         # Dictionary to store start and end times for each job on each machine
         # Structure: {job_id: {machine: {'start': start_time, 'end': end_time}}}
         self.job_machine_times = {job_id: {} for job_id in range(len(self.jobs_data))}
@@ -259,14 +272,14 @@ class JobShopEnv:
 
     def _check_done(self):
         """
-        Check if all jobs have completed their sequences.Returns:
+        Check if all jobs have completed their sequences.
+        
+        Returns:
         - done: True if all jobs are completed, False otherwise.
         """
         return all(self.job_next_machine[job] == len(self.jobs_data.iloc[job, 2:].dropna()) for job in range(len(self.jobs_data)))
 
-# =====================================================
-# 3. Deep Q-Network (DQN) Model
-# =====================================================
+# Deep Q-Network (DQN) Model
 
 class DQNScheduler(nn.Module):
     def __init__(self, input_dim, output_dim):
@@ -300,9 +313,7 @@ class DQNScheduler(nn.Module):
         x = self.relu(self.fc2(x))  # Second hidden layer
         return self.fc3(x)          # Output layer
 
-# =====================================================
-# 4. Replay Buffer for Experience Storage
-# =====================================================
+# Replay Buffer for Experience Storage
 
 class ReplayBuffer:
     def __init__(self, capacity):
@@ -347,9 +358,7 @@ class ReplayBuffer:
         """
         return len(self.buffer)
 
-# =====================================================
-# 5. Training the DQN with Batch Updates
-# =====================================================
+# Training the DQN with Batch Updates
 
 def train_dqn_batch(dqn, replay_buffer, batch_size, gamma, optimizer):
     """
@@ -398,9 +407,7 @@ def machine_to_index(machine):
     machine_list = ['LU', 'M1', 'M2', 'M3', 'M4']
     return machine_list.index(machine)
 
-# =====================================================
-# 6. Simulation and Training Loop with Epsilon-Greedy Policy
-# =====================================================
+# Simulation and Training Loop with Epsilon-Greedy Policy
 
 # Device configuration (use MPS if available, else CPU)
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -412,7 +419,7 @@ for num_agvs in range(1, 6):
     all_jobs_data = {nset: jobs(nset) for nset in range(1, 11)}        # 10 sets
     all_processing_data = {nset: processing(nset) for nset in range(1, 11)}  # 10 sets
 
-    num_episodes = 200  # Number of episodes per layout/set combination
+    num_episodes = 500  # Number of episodes per layout/set combination
     early_stopping_threshold = -100  # Threshold for early stopping based on reward
 
     # Initialize performance metrics storage
