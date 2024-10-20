@@ -372,7 +372,7 @@ def train_dqn_batch(dqn, replay_buffer, batch_size, gamma, optimizer):
     states = torch.tensor(states, dtype=torch.float32).to(device)
     # Convert complex actions (job, machine) to indices if necessary
     # For simplicity, we can encode actions as integers
-    action_indices = torch.tensor([action[0] * 5 + self.machine_to_index(action[1]) for action in actions], dtype=torch.long).to(device)
+    action_indices = torch.tensor([action[0] * 5 + machine_to_index(action[1]) for action in actions], dtype=torch.long).to(device)
     rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
     next_states = torch.tensor(next_states, dtype=torch.float32).to(device)
     dones = torch.tensor(dones, dtype=torch.float32).to(device)
