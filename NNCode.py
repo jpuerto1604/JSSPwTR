@@ -486,7 +486,7 @@ def select_action(state, env, dqn, epsilon):
         valid_actions = []
         for job in range(num_jobs):
             next_machine_index = env.job_next_machine[job]
-            job_sequence = env.jobs_data.iloc[job, 2:].dropna().tolist()
+            job_sequence = env.jobs_data.iloc[job, 2:2+env.jobs_data.iloc[job,1]].dropna().tolist()
             if next_machine_index >= len(job_sequence):
                 continue  # Skip if job is already completed
             machine = job_sequence[next_machine_index]
@@ -512,7 +512,7 @@ def select_action(state, env, dqn, epsilon):
             next_machine_index = env.job_next_machine.get(job, None)
             if next_machine_index is None:
                 continue
-            job_sequence = env.jobs_data.iloc[job, 2:].dropna().tolist()
+            job_sequence = env.jobs_data.iloc[job, 2:2+env.jobs_data.iloc[job,1]].dropna().tolist()
             if next_machine_index >= len(job_sequence):
                 continue
             correct_machine = job_sequence[next_machine_index]
@@ -549,7 +549,7 @@ def decode_action(action_idx, num_jobs, num_machines, num_agvs):
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
 # Tensorboard summary writer
-writer = SummaryWriter('runs/job_shop_dqn')
+writer = SummaryWriter('/tmp/runs/job_shop_dqn')
 # Number of AGVs to test (from 1 to 5)
 # Number of AGVs to test (from 1 to 5)
 for num_agvs in range(1, 6):
