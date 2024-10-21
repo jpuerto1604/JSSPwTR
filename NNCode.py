@@ -168,8 +168,12 @@ class JobShopEnv:
         - reward: The reward obtained from taking the action.
         - done: A boolean indicating if all jobs are completed.
         """
-        job, machine = action  # The action specifies the job and the machine (or LU)
+        job, machine, agv = action  # The action specifies the job and the machine (or LU and the AGV assigned to it
 
+        # Validate AGV availability
+        if self.agv_status[agv] == 1:
+            raise ValueError(f"AGV {agv} is currently busy.")
+        
         # Get the job's machine sequence and the correct machine it needs to go to
         job_sequence = self.jobs_data.iloc[job, 2:].dropna().tolist()
         next_machine_index = self.job_next_machine[job]
@@ -184,8 +188,8 @@ class JobShopEnv:
 
         if machine != "LU":
             # Check for an available AGV
-            available_agv = self._find_available_agv()
-            if available_agv is None:
+            agv = self._find_available_agv()
+            if agv is None:
                 raise ValueError("No AGVs are currently available.")
 
             # Check if the machine is available
@@ -193,6 +197,25 @@ class JobShopEnv:
             if self.machine_status[machine_index] == 1:  # If the machine is busy
                 raise ValueError(f"Machine {machine} is currently busy.")
 
+<<<<<<< HEAD
+            # Get the current location of the AGV
+            agv_location = self.agv_locations[agv]
+
+            # Get the current location of the job
+            job_location = self.job_locations[job]
+
+            # Calculate transport time from AGV's location to the job's location (if different)
+            if agv_location != job_location:
+                empty_move_time = t_times(self.layout, agv_location, job_location)
+            else:
+                empty_move_time = 0
+
+            # Calculate transport time from the job's location to the destination machine
+            loaded_move_time = t_times(self.layout, job_location, machine)
+
+            transport_time = empty_move_time + loaded_move_time
+
+=======
             # Get the current location of the AGV
             agv_location = self.agv_locations[available_agv]
 
@@ -210,12 +233,22 @@ class JobShopEnv:
 
             transport_time = empty_move_time + loaded_move_time
 
+>>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
             # Mark the machine and AGV as busy
             self.machine_status[machine_index] = 1
+<<<<<<< HEAD
+            self.agv_status[agv] = 1  # Mark the AGV as busy
+=======
             self.agv_status[available_agv] = 1  # Mark the AGV as busy
+>>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
 
+<<<<<<< HEAD
+            # Update the AGV's location
+            self.agv_locations[agv] = machine
+=======
             # Update the AGV's location
             self.agv_locations[available_agv] = machine
+>>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
 
             # Update the job's location
             self.job_locations[job] = machine
@@ -247,8 +280,65 @@ class JobShopEnv:
 
             # Update availability after processing
             self.machine_status[machine_index] = 0  # Free the machine
-            self.agv_status[available_agv] = 0      # Free the AGV
+            self.agv_status[agv] = 0      # Free the AGV
 
+<<<<<<< HEAD
+        else:
+            # If the machine is LU
+            # Check for an available AGV
+            agv = self._find_available_agv()
+            if agv is None:
+                raise ValueError("No AGVs are currently available.")
+
+            # Get the current location of the AGV
+            agv_location = self.agv_locations[agv]
+
+            # Get the current location of the job
+            job_location = self.job_locations[job]
+
+            # Calculate transport time from AGV's location to the job's location (if different)
+            if agv_location != job_location:
+                empty_move_time = t_times(self.layout, agv_location, job_location)
+            else:
+                empty_move_time = 0
+
+            # Calculate transport time from the job's location to LU
+            loaded_move_time = t_times(self.layout, job_location, "LU")
+
+            transport_time = empty_move_time + loaded_move_time
+
+            # Update the AGV's location
+            self.agv_locations[agv] = "LU"
+
+            # Update the job's location
+            self.job_locations[job] = "LU"
+
+            # Record the start time for the job at LU
+            start_time = self.current_time + transport_time
+
+            # No processing time at LU
+            process_time = 0
+
+            # Update the current time
+            total_time = transport_time + process_time
+            self.current_time += total_time
+
+            # Record the end time for the job at LU
+            end_time = start_time + process_time
+
+            # Store the start and end times
+            self.job_machine_times[job][machine] = {'start': start_time, 'end': end_time}
+
+            # Negative reward to minimize makespan
+            reward = -total_time
+
+            # Mark this job's machine assignment as completed
+            self.job_next_machine[job] += 1
+
+            # Free the AGV
+            self.agv_status[agv] = 0
+
+=======
         else:
             # If the machine is LU
             # Check for an available AGV
@@ -304,6 +394,7 @@ class JobShopEnv:
             # Free the AGV
             self.agv_status[available_agv] = 0
 
+>>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
         # Check if all jobs are finished
         self.done = self._check_done()
 
@@ -442,7 +533,7 @@ class ReplayBuffer:
 
 # Training the DQN with Batch Updates
 
-def train_dqn_batch(dqn, replay_buffer, batch_size, gamma, optimizer):
+def train_dqn_batch(dqn, replay_buffer, batch_size, gamma, optimizer, num_jobs, num_machines, num_agvs):
     """
     Train the DQN model using batch updates from the replay buffer.
 
@@ -463,7 +554,10 @@ def train_dqn_batch(dqn, replay_buffer, batch_size, gamma, optimizer):
     states = torch.tensor(states, dtype=torch.float32).to(device)
     # Convert complex actions (job, machine) to indices if necessary
     # For simplicity, we can encode actions as integers
-    action_indices = torch.tensor([action[0] * 5 + machine_to_index(action[1]) for action in actions], dtype=torch.long).to(device)
+    action_indices = torch.tensor(
+        [encode_action(action[0], action[1], action[2], num_machines, num_agvs) for action in actions],
+        dtype=torch.long
+    ).to(device)
     rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
     next_states = torch.tensor(next_states, dtype=torch.float32).to(device)
     dones = torch.tensor(dones, dtype=torch.float32).to(device)
@@ -489,6 +583,74 @@ def machine_to_index(machine):
     machine_list = ['LU', 'M1', 'M2', 'M3', 'M4']
     return machine_list.index(machine)
 
+<<<<<<< HEAD
+# Modify the action selection to consider the availability of AGVs and machines
+def select_action(state, env, dqn, epsilon):
+    num_jobs = len(env.jobs_data)
+    num_machines = 5  # LU, M1, M2, M3, M4
+    num_agvs = env.num_agvs
+
+    if np.random.rand() <= epsilon:
+        # Exploration: randomly choose a valid action
+        valid_actions = []
+        for job in range(num_jobs):
+            next_machine_index = env.job_next_machine[job]
+            job_sequence = env.jobs_data.iloc[job, 2:].dropna().tolist()
+            if next_machine_index >= len(job_sequence):
+                continue  # Skip if job is already completed
+            machine = job_sequence[next_machine_index]
+            machine_idx = machine_to_index(machine)
+            for agv in range(num_agvs):
+                if env.agv_status[agv] == 0:
+                    # AGV is available
+                    valid_actions.append((job, machine, agv))
+        if valid_actions:
+            return random.choice(valid_actions)
+        else:
+            return None
+    else:
+        # Exploitation: choose the best action based on the current policy
+        state_tensor = torch.tensor(state, dtype=torch.float32).to(device)
+        q_values = dqn(state_tensor)
+        sorted_indices = torch.argsort(q_values, descending=True)
+        for action_idx in sorted_indices.cpu().numpy():
+            job, machine_idx, agv = decode_action(action_idx, num_jobs, num_machines, num_agvs)
+            machine_list = ['LU', 'M1', 'M2', 'M3', 'M4']
+            machine = machine_list[machine_idx]
+            # Check if the action is valid
+            next_machine_index = env.job_next_machine.get(job, None)
+            if next_machine_index is None:
+                continue
+            job_sequence = env.jobs_data.iloc[job, 2:].dropna().tolist()
+            if next_machine_index >= len(job_sequence):
+                continue
+            correct_machine = job_sequence[next_machine_index]
+            if machine != correct_machine:
+                continue
+            # Check availability of AGV and machine
+            if env.agv_status[agv] == 1:
+                continue  # AGV is busy
+            if machine != "LU":
+                machine_index = int(machine[1]) - 1
+                if env.machine_status[machine_index] == 1:
+                    continue  # Machine is busy
+            return (job, machine, agv)
+        return None  # No valid actions
+     
+
+def encode_action(job, machine, agv, num_machines, num_agvs):
+    machine_idx = machine_to_index(machine)
+    return job * num_machines * num_agvs + machine_idx * num_agvs + agv
+
+def decode_action(action_idx, num_jobs, num_machines, num_agvs):
+    job = action_idx // (num_machines * num_agvs)
+    remainder = action_idx % (num_machines * num_agvs)
+    machine_idx = remainder // num_agvs
+    agv = remainder % num_agvs
+    return job, machine_idx, agv
+
+
+=======
 # Modify the action selection to consider the availability of AGVs and machines
 def select_action(state, env, dqn, epsilon):
     if np.random.rand() <= epsilon:
@@ -545,6 +707,7 @@ def decode_action(action_idx):
     return job, machine
 
 
+>>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
 # Simulation and Training Loop with Epsilon-Greedy Policy
 
 # Device configuration (use MPS if available, else CPU)
@@ -575,6 +738,15 @@ for num_agvs in range(1, 6):
             steps_per_job = len(jobs_data.iloc[0, 2:].dropna())
 
             # Calculate state and action dimensions
+<<<<<<< HEAD
+            state_dim = (
+                4 +  # Machine statuses
+                num_agvs +  # AGV statuses
+                num_agvs +  # AGV locations (indices)
+                num_jobs * steps_per_job +  # Job-machine times
+                num_jobs  # Job locations (indices)
+            )
+=======
             state_dim = (
                 4 +  # Machine statuses
                 num_agvs +  # AGV statuses
@@ -583,6 +755,10 @@ for num_agvs in range(1, 6):
                 num_jobs  # Job locations (indices)
             )
             action_dim = num_jobs * 5  # Each job can go to 5 locations (LU, M1 to M4)
+>>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
+
+            num_machines = 5  # LU, M1, M2, M3, M4
+            action_dim = num_jobs * num_machines * num_agvs  # New action dimension
 
             # Initialize DQN model and optimizer
             dqn = DQNScheduler(state_dim, action_dim).to(device)
@@ -610,10 +786,17 @@ for num_agvs in range(1, 6):
                 episode_reward = 0
 
                 while not done:
+<<<<<<< HEAD
+                    action = select_action(state, env, dqn, epsilon)
+                    if action is None:
+                        env.current_time += 1 
+                        continue
+=======
                     action = select_action(state, env, dqn, epsilon)
                     if action is None:
                         # No valid actions available, proceed accordingly
                         continue
+>>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
 
                     try:
                         next_state, reward, done = env.step(action)
@@ -625,7 +808,7 @@ for num_agvs in range(1, 6):
 
                     # Store experience and train
                     replay_buffer.store((state, action, reward, next_state, done))
-                    train_dqn_batch(dqn, replay_buffer, batch_size, gamma, optimizer)
+                    train_dqn_batch(dqn, replay_buffer, batch_size, gamma, optimizer, num_jobs, num_machines, num_agvs)
 
                     state = next_state
                     episode_reward += reward
