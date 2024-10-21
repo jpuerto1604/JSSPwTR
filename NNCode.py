@@ -5,6 +5,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from collections import deque
+from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
+import logging
 
 # Data Loading and Transport/Processing Times
 
@@ -43,7 +46,14 @@ df4 = pd.DataFrame(np.array([
 
 # Load processing times and machine assignments from Excel
 # Adjust the file path as needed
-xls = pd.read_excel('/Users/julian/Documentos/Thesis/Data.xlsx', sheet_name='Macrodata', usecols='F:H, J:P, R:X')
+try:
+    xls = pd.read_excel('/Users/julian/Documentos/Thesis/Data.xlsx', sheet_name='Macrodata', usecols='F:H, J:P, R:X')
+except FileNotFoundError:
+    logging.error("File not found")
+    exit(1)  # Exit gracefully
+except Exception as e:
+    logging.error(f"Error loading data: {e}")
+    exit(1)
 data = pd.DataFrame(xls)
 data.loc[:, 'nj'] = data.loc[:, 'nj'] + 1  # Adjust job numbers
 data = data.fillna('')
@@ -132,6 +142,9 @@ class JobShopEnv:
 
         # Current location of each job (starting at LU)
         self.job_locations = {job_id: "LU" for job_id in range(len(self.jobs_data))}
+        self.machine_available_at = np.zeros(4)  # Time when each machine becomes available
+        self.agv_available_at = np.zeros(self.num_agvs)  # Time when each AGV becomes available
+
 
     def reset(self):
         """
@@ -153,27 +166,35 @@ class JobShopEnv:
 
         # Reset the job-machine times tracking
         self.job_machine_times = {job_id: {} for job_id in range(len(self.jobs_data))}
+        self.machine_available_at.fill(0)
+        self.agv_available_at.fill(0)
+
 
         return self._get_state()
-
+    
+    def get_next_event_time(self):
+        next_machine_available = np.min(self.machine_available_at)
+        next_agv_available = np.min(self.agv_available_at)
+        return min(next_machine_available, next_agv_available)
+    
     def step(self, action):
         """
         Execute the given action in the environment.
 
         Parameters:
-        - action: A tuple (job, machine), assigning a job to a machine.
+        - action: A tuple (job, machine, agv), assigning a job to a machine with a specific AGV.
 
         Returns:
         - next_state: The updated state after the action.
         - reward: The reward obtained from taking the action.
         - done: A boolean indicating if all jobs are completed.
         """
-        job, machine, agv = action  # The action specifies the job and the machine (or LU and the AGV assigned to it
+        job, machine, agv = action
 
         # Validate AGV availability
         if self.agv_status[agv] == 1:
             raise ValueError(f"AGV {agv} is currently busy.")
-        
+
         # Get the job's machine sequence and the correct machine it needs to go to
         job_sequence = self.jobs_data.iloc[job, 2:].dropna().tolist()
         next_machine_index = self.job_next_machine[job]
@@ -186,127 +207,67 @@ class JobShopEnv:
         if correct_machine != machine:
             raise ValueError(f"Job {job} cannot be assigned to machine {machine}. It should go to machine {correct_machine}.")
 
+        # Calculate transport time
+        agv_location = self.agv_locations[agv]
+        job_location = self.job_locations[job]
+        empty_move_time = t_times(self.layout, agv_location, job_location) if agv_location != job_location else 0
+        loaded_move_time = t_times(self.layout, job_location, machine)
+        transport_time = empty_move_time + loaded_move_time
+
+        # Update job and AGV locations
+        self.agv_locations[agv] = machine
+        self.job_locations[job] = machine
+
         if machine != "LU":
-            # Check for an available AGV
-            agv = self._find_available_agv()
-            if agv is None:
-                raise ValueError("No AGVs are currently available.")
+            # Machines M1 to M4
 
             # Check if the machine is available
             machine_index = int(machine[1]) - 1  # Convert 'M1' to index 0
-            if self.machine_status[machine_index] == 1:  # If the machine is busy
+            if self.machine_status[machine_index] == 1:
                 raise ValueError(f"Machine {machine} is currently busy.")
 
-            # Get the current location of the AGV
-            agv_location = self.agv_locations[agv]
-
-            # Get the current location of the job
-            job_location = self.job_locations[job]
-
-            # Calculate transport time from AGV's location to the job's location (if different)
-            if agv_location != job_location:
-                empty_move_time = t_times(self.layout, agv_location, job_location)
-            else:
-                empty_move_time = 0
-
-            # Calculate transport time from the job's location to the destination machine
-            loaded_move_time = t_times(self.layout, job_location, machine)
-
-            transport_time = empty_move_time + loaded_move_time
-
-            # Mark the machine and AGV as busy
-            self.machine_status[machine_index] = 1
-            self.agv_status[agv] = 1  # Mark the AGV as busy
-
-            # Update the AGV's location
-            self.agv_locations[agv] = machine
-
-            # Update the job's location
-            self.job_locations[job] = machine
-
-            # Record the start time for the job on the machine
-            start_time = self.current_time + transport_time
-
-            # Get the processing time for this job-machine combination
-            process_time = self.processing_data.iloc[job, 3 + next_machine_index]  # Adjust index as needed
-
-            # Update the job's remaining time on this machine
-            self.job_times[job][next_machine_index] = process_time
-
-            # Update the current time
-            total_time = transport_time + process_time
-            self.current_time += total_time
-
-            # Record the end time for the job on the machine
+            # Calculate start and end times
+            start_time = self.get_next_event_time()
+            process_time = self.processing_data.iloc[job, 3 + next_machine_index]  # Get processing time for the job
             end_time = start_time + process_time
 
-            # Store the start and end times
+            # Update machine and AGV statuses and availability times
+            self.machine_status[machine_index] = 1
+            self.machine_available_at[machine_index] = end_time
+
+            self.agv_status[agv] = 1
+            self.agv_available_at[agv] = start_time + transport_time
+
+            # Record the job's processing times on the machine
             self.job_machine_times[job][machine] = {'start': start_time, 'end': end_time}
 
             # Negative reward to minimize makespan
-            reward = -total_time
+            reward = -(transport_time + process_time)
 
-            # Mark this job's machine assignment as completed
+            # Mark the job's machine assignment as completed
             self.job_next_machine[job] += 1
-
-            # Update availability after processing
-            self.machine_status[machine_index] = 0  # Free the machine
-            self.agv_status[agv] = 0      # Free the AGV
 
         else:
-            # If the machine is LU
-            # Check for an available AGV
-            agv = self._find_available_agv()
-            if agv is None:
-                raise ValueError("No AGVs are currently available.")
+            # If the machine is LU (Loading-Unloading area)
 
-            # Get the current location of the AGV
-            agv_location = self.agv_locations[agv]
+            # Calculate start and end times
+            start_time = self.get_next_event_time()
+            end_time = start_time  # No processing at LU
 
-            # Get the current location of the job
-            job_location = self.job_locations[job]
+            # Update AGV status and availability time
+            self.agv_status[agv] = 1
+            self.agv_available_at[agv] = start_time
 
-            # Calculate transport time from AGV's location to the job's location (if different)
-            if agv_location != job_location:
-                empty_move_time = t_times(self.layout, agv_location, job_location)
-            else:
-                empty_move_time = 0
-
-            # Calculate transport time from the job's location to LU
-            loaded_move_time = t_times(self.layout, job_location, "LU")
-
-            transport_time = empty_move_time + loaded_move_time
-
-            # Update the AGV's location
-            self.agv_locations[agv] = "LU"
-
-            # Update the job's location
-            self.job_locations[job] = "LU"
-
-            # Record the start time for the job at LU
-            start_time = self.current_time + transport_time
-
-            # No processing time at LU
-            process_time = 0
-
-            # Update the current time
-            total_time = transport_time + process_time
-            self.current_time += total_time
-
-            # Record the end time for the job at LU
-            end_time = start_time + process_time
-
-            # Store the start and end times
+            # Record the job's time at LU
             self.job_machine_times[job][machine] = {'start': start_time, 'end': end_time}
 
             # Negative reward to minimize makespan
-            reward = -total_time
+            reward = -transport_time
 
-            # Mark this job's machine assignment as completed
+            # Mark the job's machine assignment as completed
             self.job_next_machine[job] += 1
 
-            # Free the AGV
-            self.agv_status[agv] = 0
+        # Resource states should be updated after time advancement in the main loop, not here
 
         # Check if all jobs are finished
         self.done = self._check_done()
@@ -314,6 +275,7 @@ class JobShopEnv:
         # Get the next state of the system
         next_state = self._get_state()
         return next_state, reward, self.done
+
 
     def _find_available_agv(self):
         """
@@ -364,6 +326,23 @@ class JobShopEnv:
         - done: True if all jobs are completed, False otherwise.
         """
         return all(self.job_next_machine[job] == len(self.jobs_data.iloc[job, 2:].dropna()) for job in range(len(self.jobs_data)))
+    
+    def update_resource_states(self):
+        # Update machines
+        for i in range(len(self.machine_status)):
+            if self.machine_status[i] == 1 and self.current_time >= self.machine_available_at[i]:
+                self.machine_status[i] = 0  # Machine becomes free
+
+        # Update AGVs
+        for i in range(len(self.agv_status)):
+            if self.agv_status[i] == 1 and self.current_time >= self.agv_available_at[i]:
+                self.agv_status[i] = 0  # AGV becomes free
+    
+    def get_next_event_time(self):
+        next_machine_available = np.min(self.machine_available_at[self.machine_status == 1]) if np.any(self.machine_status == 1) else float('inf')
+        next_agv_available = np.min(self.agv_available_at[self.agv_status == 1]) if np.any(self.agv_status == 1) else float('inf')
+        return min(next_machine_available, next_agv_available)
+
 
 # Deep Q-Network (DQN) Model
 
@@ -561,11 +540,17 @@ def decode_action(action_idx, num_jobs, num_machines, num_agvs):
     agv = remainder % num_agvs
     return job, machine_idx, agv
 
+
+
+
 # Simulation and Training Loop with Epsilon-Greedy Policy
 
 # Device configuration (use MPS if available, else CPU)
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
+# Tensorboard summary writer
+writer = SummaryWriter('runs/job_shop_dqn')
+# Number of AGVs to test (from 1 to 5)
 # Number of AGVs to test (from 1 to 5)
 for num_agvs in range(1, 6):
     print(f"Training with {num_agvs} AGVs")
@@ -577,7 +562,7 @@ for num_agvs in range(1, 6):
     early_stopping_threshold = -100  # Threshold for early stopping based on reward
 
     # Initialize performance metrics storage
-    performance_metrics = {}
+    performance_metrics = []
 
     # Loop through all layouts and sets
     for layout in range(1, 5):  # 4 layouts
@@ -617,7 +602,7 @@ for num_agvs in range(1, 6):
             gamma = 0.99
             epsilon = 1.0
             epsilon_min = 0.1
-            epsilon_decay = 0.995
+            epsilon_decay_rate = 0.995
 
             total_rewards = []
 
@@ -626,31 +611,35 @@ for num_agvs in range(1, 6):
                 state = env.reset()
                 done = False
                 episode_reward = 0
+                steps = 0
 
                 while not done:
                     action = select_action(state, env, dqn, epsilon)
                     if action is None:
-                        env.current_time += 1 
+                        next_event_time = env.get_next_event_time()
+                        env.current_time = max(env.current_time, next_event_time)
+                        env.update_resource_states()
+                        state = env._get_state()  # Update the state after resource states change
                         continue
 
-                    try:
-                        next_state, reward, done = env.step(action)
-                    except ValueError as e:
-                        # Invalid action, assign a large negative reward
-                        reward = -1000
-                        next_state = state
-                        done = False
-
                     # Store experience and train
+                    next_state, reward, done = env.step(action)
                     replay_buffer.store((state, action, reward, next_state, done))
                     train_dqn_batch(dqn, replay_buffer, batch_size, gamma, optimizer, num_jobs, num_machines, num_agvs)
 
                     state = next_state
                     episode_reward += reward
+                    steps += 1
+
+                # Log episode reward
+                writer.add_scalar(f'Reward/Layout_{layout}_Set_{nset}_AGVs_{num_agvs}', episode_reward, episode)
 
                 # Epsilon decay after each episode
                 if epsilon > epsilon_min:
-                    epsilon *= epsilon_decay
+                    epsilon *= epsilon_decay_rate
+
+                if episode % 50 == 0:  # Save checkpoint every 50 episodes
+                    torch.save(dqn.state_dict(), f'checkpoint_layout{layout}_set{nset}_agvs{num_agvs}_ep{episode}.pth')
 
                 total_rewards.append(episode_reward)
 
@@ -659,25 +648,41 @@ for num_agvs in range(1, 6):
                     print(f"Early stopping at episode {episode} for Layout {layout}, Set {nset}, AGVs {num_agvs}")
                     break
 
-            # Store performance metrics
-            performance_metrics[(layout, nset, num_agvs)] = {
+            writer.flush()
+
+            # Store performance metrics after each set-layout combination
+            performance_metrics.append({
+                "layout": layout,
+                "set": nset,
+                "agvs": num_agvs,
                 "average_reward": np.mean(total_rewards),
-                "total_time": env.current_time,
-                "job_machine_times": env.job_machine_times  # Include the start and end times
-            }
+                "total_time": env.current_time
+            })
+
+            # Save performance metrics to CSV incrementally
+            pd.DataFrame(performance_metrics).to_csv("makespan_results.csv", index=False)
 
             # Save the model after training each set-layout combination
             torch.save(dqn.state_dict(), f'model_layout{layout}_set{nset}_agvs{num_agvs}.pth')
 
-    # Analyze the performance metrics
-    for key, metrics in performance_metrics.items():
-        layout, nset, agvs = key
-        print(f"Layout: {layout}, Set: {nset}, AGVs: {agvs}, "
-              f"Average Reward: {metrics['average_reward']}, Total Time: {metrics['total_time']}")
+# Generate Makespan Plot After All Training is Complete
+# Load the CSV with the makespan results
+results_df = pd.read_csv("makespan_results.csv")
 
-        # Access the start and end times
-        job_machine_times = metrics['job_machine_times']
-        for job_id, machine_times in job_machine_times.items():
-            print(f"Job {job_id}:")
-            for machine, times in machine_times.items():
-                print(f"  Machine {machine}: Start at {times['start']}, End at {times['end']}")
+plt.figure(figsize=(12, 8))
+
+# Group by layouts and sets, then plot each group
+for (layout, set_number), group_data in results_df.groupby(['layout', 'set']):
+    plt.plot(group_data['agvs'], group_data['total_time'], marker='o', label=f'Layout {layout}, Set {set_number}')
+
+plt.xlabel("Number of AGVs")
+plt.ylabel("Makespan")
+plt.title("Makespan vs Number of AGVs for Different Layout and Set Combinations")
+plt.legend(loc='upper right', bbox_to_anchor=(1.25, 1))
+plt.grid(True)
+
+# Save plot to file
+plt.savefig("makespan_vs_agvs_plot.png")
+
+# Show the plot
+plt.show()
