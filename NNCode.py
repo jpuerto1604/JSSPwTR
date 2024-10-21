@@ -486,7 +486,9 @@ def select_action(state, env, dqn, epsilon):
         valid_actions = []
         for job in range(num_jobs):
             next_machine_index = env.job_next_machine[job]
-            job_sequence = env.jobs_data.iloc[job, 2:2+env.jobs_data.iloc[job,1]].dropna().tolist()
+            n_ops = env.jobs_data.iloc[job,1]
+            job_sequence = env.jobs_data.iloc[job, 2:2+n_ops].dropna().tolist()
+            print(job_sequence)
             if next_machine_index >= len(job_sequence):
                 continue  # Skip if job is already completed
             machine = job_sequence[next_machine_index]
@@ -512,7 +514,9 @@ def select_action(state, env, dqn, epsilon):
             next_machine_index = env.job_next_machine.get(job, None)
             if next_machine_index is None:
                 continue
-            job_sequence = env.jobs_data.iloc[job, 2:2+env.jobs_data.iloc[job,1]].dropna().tolist()
+            n_ops = env.jobs_data.iloc[job,1]
+            print(n_ops)
+            job_sequence = env.jobs_data.iloc[job, 2:2+n_ops].dropna().tolist()
             if next_machine_index >= len(job_sequence):
                 continue
             correct_machine = job_sequence[next_machine_index]
