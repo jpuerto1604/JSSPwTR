@@ -197,7 +197,6 @@ class JobShopEnv:
             if self.machine_status[machine_index] == 1:  # If the machine is busy
                 raise ValueError(f"Machine {machine} is currently busy.")
 
-<<<<<<< HEAD
             # Get the current location of the AGV
             agv_location = self.agv_locations[agv]
 
@@ -215,40 +214,12 @@ class JobShopEnv:
 
             transport_time = empty_move_time + loaded_move_time
 
-=======
-            # Get the current location of the AGV
-            agv_location = self.agv_locations[available_agv]
-
-            # Get the current location of the job
-            job_location = self.job_locations[job]
-
-            # Calculate transport time from AGV's location to the job's location (if different)
-            if agv_location != job_location:
-                empty_move_time = t_times(self.layout, agv_location, job_location)
-            else:
-                empty_move_time = 0
-
-            # Calculate transport time from the job's location to the destination machine
-            loaded_move_time = t_times(self.layout, job_location, machine)
-
-            transport_time = empty_move_time + loaded_move_time
-
->>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
             # Mark the machine and AGV as busy
             self.machine_status[machine_index] = 1
-<<<<<<< HEAD
             self.agv_status[agv] = 1  # Mark the AGV as busy
-=======
-            self.agv_status[available_agv] = 1  # Mark the AGV as busy
->>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
 
-<<<<<<< HEAD
             # Update the AGV's location
             self.agv_locations[agv] = machine
-=======
-            # Update the AGV's location
-            self.agv_locations[available_agv] = machine
->>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
 
             # Update the job's location
             self.job_locations[job] = machine
@@ -282,7 +253,6 @@ class JobShopEnv:
             self.machine_status[machine_index] = 0  # Free the machine
             self.agv_status[agv] = 0      # Free the AGV
 
-<<<<<<< HEAD
         else:
             # If the machine is LU
             # Check for an available AGV
@@ -338,63 +308,6 @@ class JobShopEnv:
             # Free the AGV
             self.agv_status[agv] = 0
 
-=======
-        else:
-            # If the machine is LU
-            # Check for an available AGV
-            available_agv = self._find_available_agv()
-            if available_agv is None:
-                raise ValueError("No AGVs are currently available.")
-
-            # Get the current location of the AGV
-            agv_location = self.agv_locations[available_agv]
-
-            # Get the current location of the job
-            job_location = self.job_locations[job]
-
-            # Calculate transport time from AGV's location to the job's location (if different)
-            if agv_location != job_location:
-                empty_move_time = t_times(self.layout, agv_location, job_location)
-            else:
-                empty_move_time = 0
-
-            # Calculate transport time from the job's location to LU
-            loaded_move_time = t_times(self.layout, job_location, "LU")
-
-            transport_time = empty_move_time + loaded_move_time
-
-            # Update the AGV's location
-            self.agv_locations[available_agv] = "LU"
-
-            # Update the job's location
-            self.job_locations[job] = "LU"
-
-            # Record the start time for the job at LU
-            start_time = self.current_time + transport_time
-
-            # No processing time at LU
-            process_time = 0
-
-            # Update the current time
-            total_time = transport_time + process_time
-            self.current_time += total_time
-
-            # Record the end time for the job at LU
-            end_time = start_time + process_time
-
-            # Store the start and end times
-            self.job_machine_times[job][machine] = {'start': start_time, 'end': end_time}
-
-            # Negative reward to minimize makespan
-            reward = -total_time
-
-            # Mark this job's machine assignment as completed
-            self.job_next_machine[job] += 1
-
-            # Free the AGV
-            self.agv_status[available_agv] = 0
-
->>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
         # Check if all jobs are finished
         self.done = self._check_done()
 
@@ -583,7 +496,6 @@ def machine_to_index(machine):
     machine_list = ['LU', 'M1', 'M2', 'M3', 'M4']
     return machine_list.index(machine)
 
-<<<<<<< HEAD
 # Modify the action selection to consider the availability of AGVs and machines
 def select_action(state, env, dqn, epsilon):
     num_jobs = len(env.jobs_data)
@@ -649,65 +561,6 @@ def decode_action(action_idx, num_jobs, num_machines, num_agvs):
     agv = remainder % num_agvs
     return job, machine_idx, agv
 
-
-=======
-# Modify the action selection to consider the availability of AGVs and machines
-def select_action(state, env, dqn, epsilon):
-    if np.random.rand() <= epsilon:
-        # Exploration: randomly choose a valid action
-        valid_actions = []
-        for job in range(len(env.jobs_data)):
-            next_machine_index = env.job_next_machine[job]
-            job_sequence = env.jobs_data.iloc[job, 2:].dropna().tolist()
-            if next_machine_index >= len(job_sequence):
-                continue  # Skip if job is already completed
-            machine = job_sequence[next_machine_index]
-            # Optionally check AGV and machine availability here
-            valid_actions.append((job, machine))
-        if valid_actions:
-            return random.choice(valid_actions)
-        else:
-            return None
-    else:
-        # Exploitation: choose the best action based on the current policy
-        state_tensor = torch.tensor(state, dtype=torch.float32).to(device)
-        q_values = dqn(state_tensor)
-        sorted_indices = torch.argsort(q_values, descending=True)
-        for action_idx in sorted_indices.cpu().numpy():
-            job, machine = decode_action(action_idx)
-            # Check if the action is valid
-            next_machine_index = env.job_next_machine.get(job, None)
-            if next_machine_index is None:
-                continue
-            job_sequence = env.jobs_data.iloc[job, 2:].dropna().tolist()
-            if next_machine_index >= len(job_sequence):
-                continue
-            correct_machine = job_sequence[next_machine_index]
-            if machine != correct_machine:
-                continue
-            # Check availability of AGV and machine
-            if machine != "LU":
-                if env._find_available_agv() is None:
-                    continue
-                machine_index = int(machine[1]) - 1
-                if env.machine_status[machine_index] == 1:
-                    continue
-            return (job, machine)
-        return None  # No valid actions
-
-def encode_action(job, machine):
-    machine_idx = machine_to_index(machine)
-    return job * 5 + machine_idx
-
-def decode_action(action_idx):
-    job = action_idx // 5
-    machine_idx = action_idx % 5
-    machine_list = ['LU', 'M1', 'M2', 'M3', 'M4']
-    machine = machine_list[machine_idx]
-    return job, machine
-
-
->>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
 # Simulation and Training Loop with Epsilon-Greedy Policy
 
 # Device configuration (use MPS if available, else CPU)
@@ -738,7 +591,6 @@ for num_agvs in range(1, 6):
             steps_per_job = len(jobs_data.iloc[0, 2:].dropna())
 
             # Calculate state and action dimensions
-<<<<<<< HEAD
             state_dim = (
                 4 +  # Machine statuses
                 num_agvs +  # AGV statuses
@@ -746,16 +598,6 @@ for num_agvs in range(1, 6):
                 num_jobs * steps_per_job +  # Job-machine times
                 num_jobs  # Job locations (indices)
             )
-=======
-            state_dim = (
-                4 +  # Machine statuses
-                num_agvs +  # AGV statuses
-                num_agvs +  # AGV locations (indices)
-                num_jobs * steps_per_job +  # Job-machine times
-                num_jobs  # Job locations (indices)
-            )
-            action_dim = num_jobs * 5  # Each job can go to 5 locations (LU, M1 to M4)
->>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
 
             num_machines = 5  # LU, M1, M2, M3, M4
             action_dim = num_jobs * num_machines * num_agvs  # New action dimension
@@ -786,17 +628,10 @@ for num_agvs in range(1, 6):
                 episode_reward = 0
 
                 while not done:
-<<<<<<< HEAD
                     action = select_action(state, env, dqn, epsilon)
                     if action is None:
                         env.current_time += 1 
                         continue
-=======
-                    action = select_action(state, env, dqn, epsilon)
-                    if action is None:
-                        # No valid actions available, proceed accordingly
-                        continue
->>>>>>> ea26858a15a2d7f607214fc90abd0c9e310f76ae
 
                     try:
                         next_state, reward, done = env.step(action)
