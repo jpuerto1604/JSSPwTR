@@ -130,7 +130,7 @@ class JobShopEnv:
         self.agv_locations = ["LU"] * num_agvs  # Current location of each AGV
 
         # Track remaining times for each job at each machine in its sequence
-        self.job_times = {job_id: np.zeros(len(self.jobs_data.iloc[job_id, 2:].dropna())) for job_id in range(len(self.jobs_data))}
+        self.job_times = {job_id: np.zeros(len(self.jobs_data.iloc[job_id, 2:2+self.jobs_data.iloc[job_id,1]].dropna())) for job_id in range(len(self.jobs_data))}
 
         # Dictionary to track which machine each job needs to go to next in its sequence
         self.job_next_machine = {job_id: 0 for job_id in range(len(self.jobs_data))}
@@ -161,7 +161,7 @@ class JobShopEnv:
 
         # Reset job-machine assignment tracking and job times
         self.job_next_machine = {job_id: 0 for job_id in range(len(self.jobs_data))}
-        self.job_times = {job_id: np.zeros(len(self.jobs_data.iloc[job_id, 2:].dropna())) for job_id in range(len(self.jobs_data))}
+        self.job_times = {job_id: np.zeros(len(self.jobs_data.iloc[job_id, 2:2+self.jobs_data.iloc[job_id,1]].dropna())) for job_id in range(len(self.jobs_data))}
         self.job_locations = {job_id: "LU" for job_id in range(len(self.jobs_data))}
 
         # Reset the job-machine times tracking
@@ -196,7 +196,8 @@ class JobShopEnv:
             raise ValueError(f"AGV {agv} is currently busy.")
 
         # Get the job's machine sequence and the correct machine it needs to go to
-        job_sequence = self.jobs_data.iloc[job, 2:].dropna().tolist()
+        num_operations = self.jobs_data.iloc[job,1]
+        job_sequence = self.jobs_data.iloc[job, 2:2+num_operations].dropna().tolist()
         next_machine_index = self.job_next_machine[job]
         if next_machine_index >= len(job_sequence):
             # Job has already completed its sequence
@@ -228,7 +229,7 @@ class JobShopEnv:
 
             # Calculate start and end times
             start_time = self.get_next_event_time()
-            process_time = self.processing_data.iloc[job, 3 + next_machine_index]  # Get processing time for the job
+            process_time = self.processing_data.iloc[job, 2 + next_machine_index]  # Get processing time for the job
             end_time = start_time + process_time
 
             # Update machine and AGV statuses and availability times
@@ -325,7 +326,7 @@ class JobShopEnv:
         Returns:
         - done: True if all jobs are completed, False otherwise.
         """
-        return all(self.job_next_machine[job] == len(self.jobs_data.iloc[job, 2:].dropna()) for job in range(len(self.jobs_data)))
+        return all(self.job_next_machine[job] == len(self.jobs_data.iloc[job, 2:2+self.jobs_data.iloc[job,1]].dropna()) for job in range(len(self.jobs_data)))
     
     def update_resource_states(self):
         # Update machines
@@ -486,8 +487,8 @@ def select_action(state, env, dqn, epsilon):
         valid_actions = []
         for job in range(num_jobs):
             next_machine_index = env.job_next_machine[job]
-            n_ops = env.jobs_data.iloc[job,1]
-            job_sequence = env.jobs_data.iloc[job, 2:2+n_ops].dropna().tolist()
+            num_operations = env.jobs_data.iloc[job,1]
+            job_sequence = env.jobs_data.iloc[job, 2:2+num_operations].dropna().tolist()
             print(job_sequence)
             if next_machine_index >= len(job_sequence):
                 continue  # Skip if job is already completed
@@ -514,9 +515,9 @@ def select_action(state, env, dqn, epsilon):
             next_machine_index = env.job_next_machine.get(job, None)
             if next_machine_index is None:
                 continue
-            n_ops = env.jobs_data.iloc[job,1]
-            print(n_ops)
-            job_sequence = env.jobs_data.iloc[job, 2:2+n_ops].dropna().tolist()
+            num_operations = env.jobs_data.iloc[job,1]
+            print(num_operations)
+            job_sequence = env.jobs_data.iloc[job, 2:2+num_operations].dropna().tolist()
             if next_machine_index >= len(job_sequence):
                 continue
             correct_machine = job_sequence[next_machine_index]
@@ -544,9 +545,6 @@ def decode_action(action_idx, num_jobs, num_machines, num_agvs):
     agv = remainder % num_agvs
     return job, machine_idx, agv
 
-
-
-
 # Simulation and Training Loop with Epsilon-Greedy Policy
 
 # Device configuration (use MPS if available, else CPU)
@@ -554,7 +552,7 @@ device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
 # Tensorboard summary writer
 writer = SummaryWriter('/tmp/runs/job_shop_dqn')
-# Number of AGVs to test (from 1 to 5)
+
 # Number of AGVs to test (from 1 to 5)
 for num_agvs in range(1, 6):
     print(f"Training with {num_agvs} AGVs")
@@ -593,10 +591,10 @@ for num_agvs in range(1, 6):
 
             # Initialize DQN model and optimizer
             dqn = DQNScheduler(state_dim, action_dim).to(device)
-            optimizer = optim.Adam(dqn.parameters(), lr=0.001)  # Adjust learning rate if needed
+            optimizer = optim.Adam(dqn.parameters(), lr=0.001)  
 
             # Initialize replay buffer
-            replay_buffer = ReplayBuffer(5000)  # Adjust capacity if needed
+            replay_buffer = ReplayBuffer(1000)  
 
             # Initialize environment
             env = JobShopEnv(layout, nset, jobs_data, processing_data, num_agvs)
