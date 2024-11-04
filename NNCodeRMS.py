@@ -12,8 +12,16 @@ import logging
 import json
 import os
 from io import BytesIO
+from azure.storage.blob import BlobServiceClient
+from dotenv import load_dotenv
+
 
 # Data Loading and Transport/Processing Times
+
+load_dotenv()
+connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+if not connection_string:
+    raise ValueError("Azure Storage connection string not found.")
 
 # Define transport times between locations for different layouts
 df1 = pd.DataFrame(np.array([
@@ -50,25 +58,32 @@ df4 = pd.DataFrame(np.array([
 
 # Load processing times and machine assignments from Excel file in Azure Blob Storage
 
-connection_string = "DefaultEndpointsProtocol=https;AccountName=aml13407327522;AccountKey=chc0fH0gVEM0ErWPJvcrpoW9+4FUae1Jlhf9SFETfShUkJMTATkz0GI/dVUi1VQAREQaoKR0ugAt+AStOriOMQ==;EndpointSuffix=core.windows.net"
 container_name = "azureml"
 blob_name = "Data.xlsx"
-# Create a BlobServiceClient
-blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-# Get the blob client
-blob_client = blob_service_client.get_blob_client(container_name, blob_name)
-# Download the blob content to a BytesIO object
-blob_data = blob_client.download_blob().readall()
-excel_data = BytesIO(blob_data)
 
-try:
-    xls = pd.read_excel(excel_data, sheet_name='Macrodata', usecols='F:H, J:P, R:X')
-except FileNotFoundError:
-    logging.error("File not found")
-    exit(1)  # Exit gracefully
-except Exception as e:
-    logging.error(f"Error loading data: {e}")
-    exit(1)
+def load_data_from_blob(container_name, blob_name, connection_string):
+    """
+    Load data from an Excel file stored in Azure Blob Storage.
+
+    Parameters:
+    - container_name: The name of the Azure Blob Storage container.
+    - blob_name: The name of the blob (Excel file) to load.
+    - connection_string: The connection string for Azure Blob Storage.
+
+    Returns:
+    - A DataFrame containing the loaded data.
+    """
+    # Create a BlobServiceClient
+    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+    # Get the blob client
+    blob_client = blob_service_client.get_blob_client(container_name, blob_name)
+    # Download the blob content to a BytesIO object
+    blob_data = blob_client.download_blob().readall()
+    excel_data = BytesIO(blob_data)
+    return pd.read_excel(excel_data, sheet_name='Macrodata', usecols='F:H, J:P, R:X')
+
+# Load the data using the new function
+xls = load_data_from_blob(container_name, blob_name, connection_string)
 data = pd.DataFrame(xls)
 data.loc[:, 'nj'] = data.loc[:, 'nj'] + 1  # Adjust job numbers
 data = data.fillna('')
@@ -417,10 +432,11 @@ class DQNScheduler(nn.Module):
         """
         super(DQNScheduler, self).__init__()
 
-        # Neural network layers
-        self.fc1 = nn.Linear(input_dim, 128)  # First hidden layer with 128 neurons
-        self.fc2 = nn.Linear(128, 64)         # Second hidden layer with 64 neurons
-        self.fc3 = nn.Linear(64, output_dim)  # Output layer to predict Q-values for actions
+        # Updated model architecture with increased complexity
+        self.fc1 = nn.Linear(input_dim, 256)   # First hidden layer with 256 neurons
+        self.fc2 = nn.Linear(256, 128)         # Second hidden layer with 128 neurons
+        self.fc3 = nn.Linear(128, 64)          # Third hidden layer with 64 neurons
+        self.fc4 = nn.Linear(64, output_dim)   # Output layer to predict Q-values for actions
 
         self.relu = nn.ReLU()
 
@@ -436,7 +452,8 @@ class DQNScheduler(nn.Module):
         """
         x = self.relu(self.fc1(x))  # First hidden layer
         x = self.relu(self.fc2(x))  # Second hidden layer
-        return self.fc3(x)          # Output layer
+        x = self.relu(self.fc3(x))  # Second hidden layer
+        return self.fc4(x)          # Output layer
 
 # Replay Buffer for Experience Storage
 
@@ -652,8 +669,8 @@ for num_agvs in range(1, 6):
     all_jobs_data = {nset: jobs(nset) for nset in range(1, 11)}        # 10 sets
     all_processing_data = {nset: processing(nset) for nset in range(1, 11)}  # 10 sets
 
-    num_episodes = 1000  # Number of episodes per layout/set combination
-    early_stopping_threshold = -100  # Threshold for early stopping based on reward
+    num_episodes = 1500  # Number of episodes per layout/set combination
+    early_stopping_threshold = -50  # Threshold for early stopping based on reward
 
     # Initialize performance metrics storage
     performance_metrics = []
@@ -683,25 +700,31 @@ for num_agvs in range(1, 6):
 
             # Initialize DQN model and optimizer
             dqn = DQNScheduler(input_dim=state_dim,output_dim=action_dim).to(device)
-            optimizer = optim.Adam(dqn.parameters(), lr=0.001)  
+            optimizer = optim.RMSprop(dqn.parameters(), lr=0.001, alpha=0.999)  
 
             # Initialize replay buffer
-            replay_buffer = ReplayBuffer(2000)  
+            replay_buffer = ReplayBuffer(10000)  
 
             # Initialize environment
             env = JobShopEnv(layout, nset, jobs_data, processing_data, num_agvs)
 
             # Hyperparameters
-            batch_size = 64
+            batch_size = 256
             gamma = 0.99
             epsilon = 1.0
             epsilon_min = 0.1
             epsilon_decay_rate = 0.995
 
             total_rewards = []
-
+            best_reward = -float("inf")
             # Training loop
             for episode in range(num_episodes):
+                #Changing the epsilon_decay_rate alllows to explore at the beginning a major number of possible scenarios (Exploration) whereas at the end, it focuses on improving the best scenarios (Exploitation)
+                if episode >= int(num_episodes*0.9):
+                    epsilon_decay_rate = 0.995
+                else:
+                    epsilon_decay_rate = 0.999
+
                 state = env.reset()
                 done = False
                 episode_reward = 0
@@ -738,9 +761,11 @@ for num_agvs in range(1, 6):
                 if epsilon > epsilon_min:
                     epsilon *= epsilon_decay_rate
 
-                if episode % 500 == 0:  # Save checkpoint every 500 episodes
-                    torch.save(dqn.state_dict(), f'checkpoint_layout{layout}_set{nset}_agvs{num_agvs}_ep{episode}.pth')
-
+                if episode_reward > best_reward:
+                    best_reward = episode_reward
+                    torch.save(dqn.state_dict(), f'best_model_layout{layout}_set{nset}_agvs{num_agvs}.pth')
+                    print(f"New best model saved for layout {layout}, set {nset}, with {num_agvs} AGVs on episode {episode}.")
+                
                 total_rewards.append(episode_reward)
 
                 # Early stopping if reward threshold is met
@@ -768,8 +793,9 @@ for num_agvs in range(1, 6):
                 "total_time": env.current_time
             })
 
-            metrics_df = pd.DataFrame(performance_metrics)
-            metrics_df.to_csv("makespan_results.csv", mode='a', index=False, header=not os.path.exists("makespan_results.csv"))
+            last_metric = performance_metrics[-1:]
+            metrics_df = pd.DataFrame(last_metric)
+            metrics_df.to_csv("makespan_results_Adam1.csv", mode='a', index=False, header=not os.path.exists("makespan_results_Adam2.csv"))
 
             all_performance_metrics.append({
                 "layout": layout,
@@ -779,12 +805,14 @@ for num_agvs in range(1, 6):
                 "total_time": env.current_time
             })
 
-
             # Save the model after training each set-layout combination
             torch.save(dqn.state_dict(), f'model_layout{layout}_set{nset}_agvs{num_agvs}.pth')
 
+# Close the Tensorboard writer
+torch.save(dqn.state_dict(), 'model_checkpoint.pth')
+
 all_metrics_df = pd.DataFrame(all_performance_metrics)
-all_metrics_df.to_csv("makespan_results.csv", index=False)
+all_metrics_df.to_csv("makespan_results_RMSV1.csv", index=False)
 
 # Save all actions to a JSON file after the training is complete
 with open("actions_log.json", "w") as actions_file:
